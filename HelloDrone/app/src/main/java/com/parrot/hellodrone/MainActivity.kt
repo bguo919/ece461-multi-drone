@@ -44,6 +44,7 @@ import com.parrot.drone.groundsdk.ManagedGroundSdk
 import com.parrot.drone.groundsdk.Ref
 import com.parrot.drone.groundsdk.device.DeviceState
 import com.parrot.drone.groundsdk.device.Drone
+import com.parrot.drone.groundsdk.device.RemoteControl
 import com.parrot.drone.groundsdk.device.instrument.BatteryInfo
 import com.parrot.drone.groundsdk.device.peripheral.StreamServer
 import com.parrot.drone.groundsdk.device.peripheral.WifiAccessPoint
@@ -57,7 +58,7 @@ import com.parrot.drone.groundsdk.stream.GsdkStreamView
 
 
 /**
- * GroundSdk Hello Drone Sample.
+ * GroundSdk Hello Drone modified to scan Wifi channels.
  *
  * This activity allows the application to connect to a drone and/or a remote control.
  * It displays the connection state, battery level and video stream.
@@ -83,10 +84,18 @@ class MainActivity : AppCompatActivity() {
     private var liveStreamRef: Ref<CameraLive>? = null
     /** Current drone live stream. */
     private var liveStream: CameraLive? = null
-    // Reference to Wifi?
+    /** Reference to Wifi on drone. */
     private var wifiAccessPointRef: Ref<WifiAccessPoint>? = null
-    // Reference to WifiScanner?
+    /** Reference to WifiScanner on drone. */
     private var wifiScannerRef: Ref<WifiScanner>? = null
+
+    // Remote control:
+    /** Current remote control instance. */
+    private var rc: RemoteControl? = null
+    /** Reference to the current remote control state. */
+    private var rcStateRef: Ref<DeviceState>? = null
+    /** Reference to the current remote control battery info instrument. */
+    private var rcBatteryInfoRef: Ref<BatteryInfo>? = null
 
     // User Interface:
     /** Video stream view. */
@@ -95,8 +104,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var droneStateTxt: TextView
     /** Drone battery charge level text view. */
     private lateinit var droneBatteryTxt: TextView
+    /** Remote state level text view. */
+    private lateinit var rcStateTxt: TextView
+    /** Remote battery charge level text view. */
+    private lateinit var rcBatteryTxt: TextView
     /** Take off / land button. */
     private lateinit var takeOffLandBt: Button
+    /** Wifi channel UIs.*/
     private lateinit var wifiChannelList: TextView
     private lateinit var changeChannelBtn: Button
 
@@ -108,6 +122,8 @@ class MainActivity : AppCompatActivity() {
         streamView = findViewById(R.id.stream_view)
         droneStateTxt = findViewById(R.id.droneStateTxt)
         droneBatteryTxt = findViewById(R.id.droneBatteryTxt)
+        rcStateTxt = findViewById(R.id.rcStateTxt)
+        rcBatteryTxt = findViewById(R.id.rcBatteryTxt)
         takeOffLandBt = findViewById(R.id.takeOffLandBt)
         wifiChannelList = findViewById(R.id.wifiChannelList)
         changeChannelBtn = findViewById(R.id.changeChannelBtn)
@@ -116,6 +132,7 @@ class MainActivity : AppCompatActivity() {
 
         // Initialize user interface default values.
         droneStateTxt.text = DeviceState.ConnectionState.DISCONNECTED.toString()
+        rcStateTxt.text = DeviceState.ConnectionState.DISCONNECTED.toString()
 
         // Get a GroundSdk session.
         groundSdk = ManagedGroundSdk.obtainSession(this)
@@ -152,6 +169,23 @@ class MainActivity : AppCompatActivity() {
                         startDroneMonitors()
                     }
                 }
+
+                // If the remote control has changed.
+                if (rc?.uid  != it.remoteControl?.uid) {
+                    if(rc != null) {
+                        // Stop monitoring the old remote.
+                        stopRcMonitors()
+
+                        // Reset user interface Remote part.
+                        resetRcUi()
+                    }
+
+                    // Monitor the new remote.
+                    rc = it.remoteControl
+                    if(rc != null) {
+                        startRcMonitors()
+                    }
+                }
             }
         }
     }
@@ -178,11 +212,13 @@ class MainActivity : AppCompatActivity() {
         // Monitor drone battery charge level.
         monitorDroneBatteryChargeLevel()
 
+        // Monitor piloting interface.
         monitorPilotingInterface()
 
         // Start video stream.
         startVideoStream()
 
+        // Monitor wifi channels.
         monitorWifiChannels()
     }
 
@@ -366,6 +402,69 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Resets remote user interface part.
+     */
+    private fun resetRcUi() {
+        // Reset remote control user interface views.
+        rcStateTxt.text = DeviceState.ConnectionState.DISCONNECTED.toString()
+        rcBatteryTxt.text = ""
+    }
+
+    /**
+     * Starts remote control monitors.
+     */
+    private fun startRcMonitors() {
+        // Monitor remote state
+        monitorRcState()
+
+        // Monitor remote battery charge level
+        monitorRcBatteryChargeLevel()
+    }
+
+    /**
+     * Stops remote control monitors.
+     */
+    private fun stopRcMonitors() {
+        // Close all references linked to the current remote to stop their monitoring.
+
+        rcStateRef?.close()
+        rcStateRef = null
+
+        rcBatteryInfoRef?.close()
+        rcBatteryInfoRef = null
+    }
+
+    /**
+     * Monitor current remote control state.
+     */
+    private fun monitorRcState() {
+        // Monitor current drone state.
+        rcStateRef = rc?.getState {
+            // Called at each remote state update.
+
+            it?.let {
+                // Update remote connection state view.
+                rcStateTxt.text = it.connectionState.toString()
+            }
+        }
+    }
+
+    /**
+     * Monitors current remote control battery charge level.
+     */
+    private fun monitorRcBatteryChargeLevel() {
+        // Monitor the battery info instrument.
+        rcBatteryInfoRef = rc?.getInstrument(BatteryInfo::class.java) {
+            // Called when the battery info instrument is available and when it changes.
+
+            it?.let {
+                // Update drone battery charge level view.
+                rcBatteryTxt.text = getString(R.string.percentage, it.charge)
+            }
+        }
+    }
+
     private fun monitorWifiChannels() {
         wifiAccessPointRef = drone?.getPeripheral(WifiAccessPoint::class.java) { wifiAccessPoint ->
             wifiAccessPoint?.channel()?.availableChannels?.let { channels ->
@@ -415,7 +514,6 @@ class MainActivity : AppCompatActivity() {
 
         }
         builder.setNegativeButton("Cancel") { dialog, _ -> dialog.cancel() }
-
         builder.show()
     }
 }
